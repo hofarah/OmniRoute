@@ -15,7 +15,7 @@ import { recordKeyQuotaUsage } from "@/domain/keyQuota";
 import { formatUsageLog } from "@/lib/usage/tokenAccounting";
 import { COLORS } from "../../utils/stream.ts";
 import { recordTokenUsage } from "../../services/tokenLimitCounter.ts";
-import { computeBillableTokens } from "./upstreamTimeouts.ts";
+import { computeBillableTokens, computeTokenBreakdown } from "./upstreamTimeouts.ts";
 import { type EffectiveServiceTier } from "./serviceTier.ts";
 import { type AgentContext } from "./agentContext.ts";
 
@@ -87,7 +87,7 @@ function recordBillableTokens(
         apiKeyInfo.id,
         provider || "unknown",
         model || "unknown",
-        billable,
+        computeTokenBreakdown(usage),
         requestStartedAt
       );
   } catch {

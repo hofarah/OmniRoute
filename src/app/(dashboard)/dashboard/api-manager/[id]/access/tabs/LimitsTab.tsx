@@ -9,8 +9,11 @@ import Input from "@/shared/components/Input";
 import { UsageLimitSettings } from "@/app/(dashboard)/dashboard/api-manager/components/UsageLimitSettings";
 import type { ApiKeyAccessFormState } from "../useApiKeyAccessForm";
 import TabErrorList from "./TabErrorList";
+import TokenLimitsSection from "./TokenLimitsSection";
 
 interface LimitsTabProps {
+  /** Present when editing a saved key; enables the per-key token limits editor. */
+  apiKeyId?: string;
   formState: ApiKeyAccessFormState;
   setMaxSessions: (sessions: number) => void;
   setThrottleDelayMs: (delay: number) => void;
@@ -306,6 +309,7 @@ export default function LimitsTab({
   setWeeklyUsageLimitUsd,
   setFiveHourUsageLimitUsd,
   errors,
+  apiKeyId,
 }: LimitsTabProps) {
   return (
     <div className="flex flex-col gap-5">
@@ -348,6 +352,9 @@ export default function LimitsTab({
           onFiveHourLimitUsdChange={setFiveHourUsageLimitUsd}
         />
       </div>
+
+      {/* Token limits (input / output / total) */}
+      {apiKeyId && <TokenLimitsSection apiKeyId={apiKeyId} />}
     </div>
   );
 }

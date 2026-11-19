@@ -17,11 +17,18 @@ import { getBudgetWindow, type BudgetResetInterval } from "@/domain/costRules";
 
 export type TokenLimitScopeType = "model" | "provider" | "global";
 
+/**
+ * Which tokens a limit counts (fork feature): `total` = input + output + reasoning (the original
+ * behaviour), `input` = prompt/input tokens only, `output` = output + reasoning tokens.
+ */
+export type TokenLimitTokenType = "total" | "input" | "output";
+
 export interface TokenLimit {
   id: string;
   apiKeyId: string;
   scopeType: TokenLimitScopeType;
   scopeValue: string;
+  tokenType: TokenLimitTokenType;
   tokenLimit: number;
   resetInterval: BudgetResetInterval;
   resetTime: string;
@@ -35,6 +42,7 @@ export interface UpsertTokenLimitInput {
   apiKeyId: string;
   scopeType: TokenLimitScopeType;
   scopeValue?: string;
+  tokenType?: TokenLimitTokenType;
   tokenLimit: number;
   resetInterval?: BudgetResetInterval;
   resetTime?: string;
@@ -51,6 +59,7 @@ export interface TokenWindowState {
 type JsonRecord = Record<string, unknown>;
 
 let _schemaChecked = false;
+let _schemaCheckedFor: unknown = null;
 
 function asRecord(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
@@ -70,27 +79,34 @@ function normalizeScopeType(value: unknown): TokenLimitScopeType {
   return "global";
 }
 
+export function normalizeTokenType(value: unknown): TokenLimitTokenType {
+  if (value === "input" || value === "output" || value === "total") return value;
+  return "total";
+}
+
 function normalizeResetInterval(value: unknown): BudgetResetInterval {
   if (value === "daily" || value === "weekly" || value === "monthly") return value;
   return "monthly";
 }
 
 function ensureSchema() {
-  if (_schemaChecked) return;
   const db = getDbInstance();
+  // Re-check per DB instance (resetDbInstance / a re-created DB must get the token_type rebuild).
+  if (_schemaChecked && _schemaCheckedFor === db) return;
   db.exec(`
     CREATE TABLE IF NOT EXISTS api_key_token_limits (
       id              TEXT PRIMARY KEY,
       api_key_id      TEXT NOT NULL,
       scope_type      TEXT NOT NULL CHECK (scope_type IN ('model', 'provider', 'global')),
       scope_value     TEXT NOT NULL DEFAULT '',
+      token_type      TEXT NOT NULL DEFAULT 'total' CHECK (token_type IN ('total', 'input', 'output')),
       token_limit     INTEGER NOT NULL CHECK (token_limit > 0),
       reset_interval  TEXT NOT NULL DEFAULT 'monthly' CHECK (reset_interval IN ('daily', 'weekly', 'monthly')),
       reset_time      TEXT,
       enabled         INTEGER NOT NULL DEFAULT 1,
       created_at      TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
-      UNIQUE (api_key_id, scope_type, scope_value, reset_interval)
+      UNIQUE (api_key_id, scope_type, scope_value, reset_interval, token_type)
     );
     CREATE INDEX IF NOT EXISTS idx_aktl_api_key_id ON api_key_token_limits (api_key_id);
     CREATE TABLE IF NOT EXISTS api_key_token_counters (
@@ -111,7 +127,60 @@ function ensureSchema() {
     );
     CREATE INDEX IF NOT EXISTS idx_aktlrl_limit_id ON api_key_token_limit_reset_logs (limit_id);
   `);
+  addTokenTypeColumnIfMissing(db);
   _schemaChecked = true;
+  _schemaCheckedFor = db;
+}
+
+/**
+ * Fork feature: tables created by migrations 073/196 have no `token_type` and a UNIQUE key without
+ * it (so an input and an output limit for the same scope/window could not coexist). SQLite cannot
+ * alter a table constraint, so the table is rebuilt once, preserving every limit (as `total`),
+ * counter and reset log — the same copy-aside pattern as migration 196. Done lazily here instead of
+ * a numbered migration so future upstream migrations can never collide with it.
+ */
+function addTokenTypeColumnIfMissing(db: ReturnType<typeof getDbInstance>) {
+  const cols = db.prepare("PRAGMA table_info(api_key_token_limits)").all() as Array<{
+    name?: string;
+  }>;
+  if (cols.some((c) => c.name === "token_type")) return;
+  db.transaction(() => {
+    db.exec(`
+      DROP TABLE IF EXISTS temp.aktl_tt_counters;
+      DROP TABLE IF EXISTS temp.aktl_tt_reset_logs;
+      CREATE TEMP TABLE aktl_tt_counters AS SELECT * FROM api_key_token_counters;
+      CREATE TEMP TABLE aktl_tt_reset_logs AS SELECT * FROM api_key_token_limit_reset_logs;
+      CREATE TABLE api_key_token_limits_tt (
+        id              TEXT PRIMARY KEY,
+        api_key_id      TEXT NOT NULL,
+        scope_type      TEXT NOT NULL CHECK (scope_type IN ('model', 'provider', 'global')),
+        scope_value     TEXT NOT NULL DEFAULT '',
+        token_type      TEXT NOT NULL DEFAULT 'total' CHECK (token_type IN ('total', 'input', 'output')),
+        token_limit     INTEGER NOT NULL CHECK (token_limit > 0),
+        reset_interval  TEXT NOT NULL DEFAULT 'monthly' CHECK (reset_interval IN ('daily', 'weekly', 'monthly')),
+        reset_time      TEXT,
+        enabled         INTEGER NOT NULL DEFAULT 1,
+        created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE (api_key_id, scope_type, scope_value, reset_interval, token_type)
+      );
+      INSERT INTO api_key_token_limits_tt
+        (id, api_key_id, scope_type, scope_value, token_type, token_limit, reset_interval,
+         reset_time, enabled, created_at, updated_at)
+      SELECT id, api_key_id, scope_type, scope_value, 'total', token_limit, reset_interval,
+             reset_time, enabled, created_at, updated_at
+      FROM api_key_token_limits;
+      DROP TABLE api_key_token_limits;
+      ALTER TABLE api_key_token_limits_tt RENAME TO api_key_token_limits;
+      CREATE INDEX IF NOT EXISTS idx_aktl_api_key_id ON api_key_token_limits (api_key_id);
+      INSERT OR IGNORE INTO api_key_token_counters (limit_id, window_start, tokens_used, updated_at)
+        SELECT limit_id, window_start, tokens_used, updated_at FROM temp.aktl_tt_counters;
+      INSERT OR IGNORE INTO api_key_token_limit_reset_logs (id, limit_id, reset_at, prev_tokens, window_start)
+        SELECT id, limit_id, reset_at, prev_tokens, window_start FROM temp.aktl_tt_reset_logs;
+      DROP TABLE temp.aktl_tt_counters;
+      DROP TABLE temp.aktl_tt_reset_logs;
+    `);
+  })();
 }
 
 function rowToTokenLimit(row: unknown): TokenLimit {
@@ -121,6 +190,7 @@ function rowToTokenLimit(row: unknown): TokenLimit {
     apiKeyId: typeof r.api_key_id === "string" ? r.api_key_id : "",
     scopeType: normalizeScopeType(r.scope_type),
     scopeValue: typeof r.scope_value === "string" ? r.scope_value : "",
+    tokenType: normalizeTokenType(r.token_type),
     tokenLimit: toNumber(r.token_limit),
     resetInterval: normalizeResetInterval(r.reset_interval),
     resetTime: typeof r.reset_time === "string" && r.reset_time ? r.reset_time : "00:00",
@@ -154,6 +224,7 @@ function normalizeUpsertInput(input: UpsertTokenLimitInput) {
     apiKeyId: input.apiKeyId,
     scopeType,
     scopeValue: scopeType === "global" ? "" : (input.scopeValue ?? "").trim(),
+    tokenType: normalizeTokenType(input.tokenType),
     resetInterval: normalizeResetInterval(input.resetInterval),
     resetTime: typeof input.resetTime === "string" && input.resetTime ? input.resetTime : "00:00",
     enabled: input.enabled === false ? 0 : 1,
@@ -167,14 +238,15 @@ function updateTokenLimitById(id: string, row: ReturnType<typeof normalizeUpsert
     .prepare(
       `SELECT id FROM api_key_token_limits
        WHERE api_key_id = @apiKeyId AND scope_type = @scopeType AND scope_value = @scopeValue
-         AND reset_interval = @resetInterval AND id != @id`
+         AND reset_interval = @resetInterval AND token_type = @tokenType AND id != @id`
     )
     .get({ ...row, id });
   if (clash) throw new TokenLimitConflictError(row.scopeType, row.resetInterval);
   const result = db
     .prepare(
       `UPDATE api_key_token_limits
-       SET scope_type = @scopeType, scope_value = @scopeValue, token_limit = @tokenLimit,
+       SET scope_type = @scopeType, scope_value = @scopeValue, token_type = @tokenType,
+           token_limit = @tokenLimit,
            reset_interval = @resetInterval, reset_time = @resetTime, enabled = @enabled,
            updated_at = datetime('now')
        WHERE id = @id AND api_key_id = @apiKeyId`
@@ -188,9 +260,9 @@ function insertOrMergeTokenLimit(row: ReturnType<typeof normalizeUpsertInput>): 
   const db = getDbInstance();
   db.prepare(
     `INSERT INTO api_key_token_limits
-       (id, api_key_id, scope_type, scope_value, token_limit, reset_interval, reset_time, enabled, created_at, updated_at)
-     VALUES (@id, @apiKeyId, @scopeType, @scopeValue, @tokenLimit, @resetInterval, @resetTime, @enabled, datetime('now'), datetime('now'))
-     ON CONFLICT(api_key_id, scope_type, scope_value, reset_interval)
+       (id, api_key_id, scope_type, scope_value, token_type, token_limit, reset_interval, reset_time, enabled, created_at, updated_at)
+     VALUES (@id, @apiKeyId, @scopeType, @scopeValue, @tokenType, @tokenLimit, @resetInterval, @resetTime, @enabled, datetime('now'), datetime('now'))
+     ON CONFLICT(api_key_id, scope_type, scope_value, reset_interval, token_type)
      DO UPDATE SET token_limit = excluded.token_limit,
                    reset_time  = excluded.reset_time,
                    enabled     = excluded.enabled,
@@ -199,9 +271,12 @@ function insertOrMergeTokenLimit(row: ReturnType<typeof normalizeUpsertInput>): 
   const written = db
     .prepare(
       `SELECT id FROM api_key_token_limits
-       WHERE api_key_id = ? AND scope_type = ? AND scope_value = ? AND reset_interval = ?`
+       WHERE api_key_id = ? AND scope_type = ? AND scope_value = ? AND reset_interval = ?
+         AND token_type = ?`
     )
-    .get(row.apiKeyId, row.scopeType, row.scopeValue, row.resetInterval) as { id: string };
+    .get(row.apiKeyId, row.scopeType, row.scopeValue, row.resetInterval, row.tokenType) as {
+    id: string;
+  };
   return written.id;
 }
 

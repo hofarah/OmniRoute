@@ -86,6 +86,19 @@ export function computeBillableTokens(usage: unknown): number {
   return getLoggedInputTokens(usage) + (reasoning > output ? output + reasoning : output);
 }
 
+/** Same counts as computeBillableTokens, split for input/output token limits (fork feature). */
+export function computeTokenBreakdown(usage: unknown): {
+  input: number;
+  output: number;
+  reasoning: number;
+} {
+  return {
+    input: getLoggedInputTokens(usage),
+    output: getLoggedOutputTokens(usage),
+    reasoning: getReasoningTokens(usage),
+  };
+}
+
 /** Resolves the model-level `timeoutMs` registry override, when both
  *  `provider` and `model` are known and the model registers one (#6354). */
 function resolveModelTimeoutOverride(provider?: string, model?: string): number | undefined {

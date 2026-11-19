@@ -37,6 +37,8 @@
  * claim (`claudeLimitReset.ts`) is injected as a callback so this file stays unit-testable.
  */
 
+import { isClaudeSetupTokenData } from "./claudeSetupToken.ts";
+
 type JsonRecord = Record<string, unknown>;
 
 export const CLAUDE_USAGE_LIMIT_HEADER = "anthropic-usage-limit";
@@ -179,7 +181,8 @@ export function readClaudeUsageLimitConfig(providerSpecificData: unknown): Claud
   const psd = asRecord(providerSpecificData);
   return {
     lowPriorityMode: psd.lowPriorityMode === true,
-    autoLimitReset: psd.autoLimitReset === true,
+    // setup-token connections cannot read usage or claim a reset (both 403): never attempt it.
+    autoLimitReset: psd.autoLimitReset === true && !isClaudeSetupTokenData(psd),
   };
 }
 

@@ -41,6 +41,7 @@ import { supportsProviderQuota } from "@/shared/utils/providerQuotaVisibility";
 import { mergeProviderLimitsCacheEntry, toProviderLimitsCacheEntry } from "./providerLimitsCache";
 import { getCredentialRefreshExecutor } from "@omniroute/open-sse/executors/credential.ts";
 import { getUsageForProvider } from "@omniroute/open-sse/services/usage.ts";
+import { isClaudeSetupTokenConnection } from "@omniroute/open-sse/services/claudeSetupToken.ts";
 import {
   fetchAndSeedClaudeResetCreditUsage,
   withClaudeResetCreditCount,
@@ -1138,7 +1139,12 @@ async function fetchLiveProviderLimitsWithOptions(
       // their base usage request and never trigger reset-credit activity. The only
       // background exception is the opt-in, capped sweep in
       // src/lib/services/codexResetCreditAutospend.ts, and it runs outside this path.
-      if (options.includeResetCredits && conn.provider === "claude" && conn.accessToken) {
+      if (
+        options.includeResetCredits &&
+        conn.provider === "claude" &&
+        conn.accessToken &&
+        !isClaudeSetupTokenConnection(conn)
+      ) {
         await fetchAndSeedClaudeResetCreditUsage(conn.id, conn.accessToken);
       }
       connection = conn;

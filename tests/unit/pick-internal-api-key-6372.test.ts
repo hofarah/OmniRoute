@@ -78,3 +78,14 @@ test("#6372: falls back to an active key when none is management-scoped or allow
     "last-resort fallback stays best-effort and does not bypass policy"
   );
 });
+
+test("fork: prefers an allow-all key without a connection allowlist", async () => {
+  // Inserted first: allow-all models but pinned to one connection — under the old ranking this
+  // was picked and every probe pinned to another connection failed "No active credentials".
+  await apiKeysDb.createApiKey("conn-restricted", "machine-a", ["self:usage"], {
+    allowedConnections: ["00000000-0000-4000-8000-000000000001"],
+  });
+  const open = await apiKeysDb.createApiKey("conn-open", "machine-a", ["self:usage"]);
+
+  assert.equal(await apiKeysDb.pickApiKeyForInternalUse("combo-health-check"), open.key);
+});

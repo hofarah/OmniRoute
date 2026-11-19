@@ -14,7 +14,7 @@
 import { saveRequestUsage } from "@/lib/usageDb";
 import { recordKeyQuotaUsage } from "@/domain/keyQuota";
 import { recordTokenUsage } from "../../services/tokenLimitCounter.ts";
-import { computeBillableTokens } from "./upstreamTimeouts.ts";
+import { computeBillableTokens, computeTokenBreakdown } from "./upstreamTimeouts.ts";
 import { type EffectiveServiceTier } from "./serviceTier.ts";
 import { type AgentContext } from "./agentContext.ts";
 
@@ -80,7 +80,7 @@ function recordStreamingBillableTokens(
         ctx.apiKeyInfo.id,
         ctx.provider || "unknown",
         ctx.model || "unknown",
-        billable,
+        computeTokenBreakdown(usage),
         ctx.startTime
       );
   } catch {

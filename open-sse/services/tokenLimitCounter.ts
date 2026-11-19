@@ -67,11 +67,19 @@ export function seedWindowUsageFromHistory(
   // Reasoning is a subset of tokens_output unless the provider reported it as a separate bucket,
   // and then both are billed (#15496).
   // This must mirror computeBillableTokens() in chatCore/upstreamTimeouts.ts.
-  const tokenSum = `COALESCE(SUM(
-      COALESCE(tokens_input, 0) + COALESCE(tokens_output, 0)
-      + CASE WHEN COALESCE(tokens_reasoning, 0) > COALESCE(tokens_output, 0)
-          THEN COALESCE(tokens_reasoning, 0) ELSE 0 END
-    ), 0) AS total`;
+  // Fork: input / output limits seed only their own columns. Reasoning is a subset of output
+  // unless the provider reports it above output (then both count) — same rule as
+  // computeBillableTokens / tokenDeltaForLimit.
+  const tokenType = limit.tokenType ?? "total";
+  const outputExpr =
+    "(COALESCE(tokens_output, 0) + CASE WHEN COALESCE(tokens_reasoning, 0) > COALESCE(tokens_output, 0) THEN COALESCE(tokens_reasoning, 0) ELSE 0 END)";
+  const tokenExpr =
+    tokenType === "input"
+      ? "COALESCE(tokens_input, 0)"
+      : tokenType === "output"
+        ? outputExpr
+        : `COALESCE(tokens_input, 0) + ${outputExpr}`;
+  const tokenSum = `COALESCE(SUM(${tokenExpr}), 0) AS total`;
 
   let row: unknown;
   if (limit.scopeType === "model") {
@@ -184,6 +192,7 @@ export function clearTokenLimitCache(): void {
  */
 export interface TokenLimitBreach {
   limitId: string;
+  tokenType: TokenLimit["tokenType"];
   scopeType: TokenLimit["scopeType"];
   scopeValue: string;
   limitValue: number;
@@ -232,6 +241,7 @@ export function checkTokenLimits(
     const remaining = Math.max(0, limitValue - tokensUsed);
     const breach: TokenLimitBreach = {
       limitId: limit.id,
+      tokenType: limit.tokenType ?? "total",
       scopeType: limit.scopeType,
       scopeValue: limit.scopeValue,
       limitValue,
@@ -252,6 +262,47 @@ export function checkTokenLimits(
   }
 
   return worst;
+}
+
+/**
+ * Per-request token counts (fork feature: input / output token limits). `total` is the canonical
+ * billable total (input + output + reasoning, see computeBillableTokens).
+ */
+export interface TokenUsageBreakdown {
+  input: number;
+  output: number;
+  reasoning?: number;
+}
+
+type NormalizedTokenUsage = { input: number; output: number; total: number; known: boolean };
+
+function nonNegInt(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+}
+
+function normalizeTokenUsage(tokens: number | TokenUsageBreakdown): NormalizedTokenUsage {
+  if (typeof tokens === "number") {
+    // Legacy callers pass only the total: input/output-typed limits cannot be attributed.
+    return { input: 0, output: 0, total: nonNegInt(tokens), known: false };
+  }
+  const input = nonNegInt(tokens?.input);
+  const rawOutput = nonNegInt(tokens?.output);
+  const reasoning = nonNegInt(tokens?.reasoning);
+  // Reasoning is a subset of output unless reported above it (separate buckets): same rule as
+  // computeBillableTokens, so `total` equals the billable total.
+  const output = reasoning > rawOutput ? rawOutput + reasoning : rawOutput;
+  return { input, output, total: input + output, known: true };
+}
+
+/** Tokens a single limit should be charged for this request. */
+export function tokenDeltaForLimit(
+  limit: Pick<TokenLimit, "tokenType">,
+  usage: NormalizedTokenUsage
+): number {
+  const type = limit.tokenType ?? "total";
+  if (type === "input") return usage.known ? usage.input : 0;
+  if (type === "output") return usage.known ? usage.output : 0;
+  return usage.total;
 }
 
 /**
@@ -278,12 +329,12 @@ export function recordTokenUsage(
   apiKeyId: string,
   provider: string,
   model: string,
-  tokens: number,
+  tokens: number | TokenUsageBreakdown,
   requestStartedAt?: number
 ): void {
   if (!apiKeyId) return;
-  const delta = Number.isFinite(tokens) && tokens > 0 ? Math.floor(tokens) : 0;
-  if (delta <= 0) return;
+  const usage = normalizeTokenUsage(tokens);
+  if (usage.total <= 0) return;
 
   // Schedule off the hot path; never await, never block the stream.
   Promise.resolve()
@@ -333,6 +384,8 @@ export function recordTokenUsage(
             }
           }
 
+          const delta = tokenDeltaForLimit(limit, usage);
+          if (delta <= 0) continue;
           const total = incrementWindowTokens(limit.id, windowStart, delta);
           applied.push({ limitId: limit.id, windowStart, total });
         }

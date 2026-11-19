@@ -8,6 +8,7 @@
  * release is captured.
  */
 
+import { isClaudeSetupTokenData } from "../services/claudeSetupToken.ts";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 import {
@@ -252,7 +253,10 @@ export function resolveAccountUUID(
   const cached = accountUuidCache.get(seed);
   if (cached?.uuid) return cached.uuid;
 
-  if (accessToken) void backgroundFetchAccountUUID(accessToken, seed);
+  // setup-token connections get 403 from bootstrap: keep the deterministic fallback, no fetch.
+  if (accessToken && !isClaudeSetupTokenData(providerSpecificData)) {
+    void backgroundFetchAccountUUID(accessToken, seed);
+  }
 
   // CodeQL: This is intentionally SHA-256 for deterministic UUID generation from
   // a seed string — NOT password hashing. The output is a format-correct UUIDv4

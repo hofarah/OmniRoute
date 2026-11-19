@@ -811,7 +811,7 @@ function validateTokenLimit(context: PolicyContext): Response | null {
     const resetSuffix = formatResetDurationSuffix(breach.nextResetAt) || "Please try again later.";
     return errorResponse(
       HTTP_STATUS.RATE_LIMITED,
-      `Token limit exceeded for ${scopeLabel}: ${breach.tokensUsed}/${breach.limitValue} tokens used in the current window. ${resetSuffix}`,
+      `Token limit exceeded for ${scopeLabel}: ${breach.tokensUsed}/${breach.limitValue} ${breach.tokenType === "input" ? "input tokens" : breach.tokenType === "output" ? "output tokens" : "tokens"} used in the current window. ${resetSuffix}`,
       { code: "token_limit_exceeded", retryAfter: breach.nextResetAt }
     );
   } catch (error) {

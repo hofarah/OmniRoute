@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { getComboByName, getCombos } from "@/lib/db/combos";
-import { pickApiKeyForInternalUse } from "@/lib/db/apiKeys";
+import { resolveSelfLoopBearer } from "@/shared/middleware/chatAdmissionIdentity";
 import { buildComboTestRequestBody } from "@/lib/combos/testHealth";
 import {
   extractModelTestResponseText,
@@ -80,10 +80,12 @@ async function resolveAutoTestCombo(
 }
 
 async function getInternalApiKey(): Promise<string | null> {
-  // Combo health-check probes hit /v1/chat/completions, which enforces
-  // per-key model allowlists (see shared/utils/apiKeyPolicy.ts). Picking
-  // an arbitrary active key is unsafe — see pickApiKeyForInternalUse.
-  return pickApiKeyForInternalUse("combo-health-check");
+  // Combo health-check probes hit /v1/chat/completions, which enforces per-key model AND
+  // connection allowlists (shared/utils/apiKeyPolicy.ts). Borrowing a user's API key made every
+  // target outside that key's connection allowlist fail as "No active credentials" (and billed
+  // the probe to that user). The internal self-loop credential is unrestricted and owned by
+  // OmniRoute itself, so each pinned target is tested for real.
+  return resolveSelfLoopBearer();
 }
 
 type ComboTestResult = {

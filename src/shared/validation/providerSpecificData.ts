@@ -214,6 +214,47 @@ export function isValidGheUrl(raw: string): boolean {
   }
 }
 
+// Fork feature: per-connection input translation (open-sse/services/inputTranslation.ts).
+function validateInputTranslationBlock(value: unknown, ctx: z.RefinementCtx): void {
+  if (value === undefined || value === null) return;
+  const issue = (message: string, key?: string) =>
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `providerSpecificData.inputTranslation${key ? `.${key}` : ""} ${message}`,
+      path: key ? ["inputTranslation", key] : ["inputTranslation"],
+    });
+  if (typeof value !== "object" || Array.isArray(value)) return issue("must be an object");
+  const record = value as Record<string, unknown>;
+  if (record.enabled !== undefined && typeof record.enabled !== "boolean") {
+    issue("must be a boolean", "enabled");
+  }
+  for (const key of ["model", "targetLanguage"] as const) {
+    const v = record[key];
+    if (v !== undefined && (typeof v !== "string" || v.length > 200)) {
+      issue("must be a string up to 200 chars", key);
+    }
+  }
+  if (
+    record.enabled === true &&
+    (typeof record.model !== "string" ||
+      !record.model.trim() ||
+      typeof record.targetLanguage !== "string" ||
+      !record.targetLanguage.trim())
+  ) {
+    issue("requires model and targetLanguage when enabled");
+  }
+  const timeoutMs = record.timeoutMs;
+  if (
+    timeoutMs !== undefined &&
+    (typeof timeoutMs !== "number" ||
+      !Number.isFinite(timeoutMs) ||
+      timeoutMs <= 0 ||
+      timeoutMs > 600_000)
+  ) {
+    issue("must be a positive number up to 600000", "timeoutMs");
+  }
+}
+
 export function validateProviderSpecificData(
   data: Record<string, unknown> | undefined,
   ctx: z.RefinementCtx
@@ -221,6 +262,7 @@ export function validateProviderSpecificData(
   if (!data) return;
 
   validateQuotaEndpointField(data.quotaEndpoint, ctx);
+  validateInputTranslationBlock(data.inputTranslation, ctx);
 
   const gheUrl = data.gheUrl;
   if (gheUrl !== undefined) {

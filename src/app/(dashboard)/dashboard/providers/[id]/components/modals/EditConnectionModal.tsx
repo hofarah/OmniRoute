@@ -90,6 +90,11 @@ import PeakHourProtectionEditor, {
   normalizePeakHourProtectionForSave,
 } from "../PeakHourProtectionEditor";
 import type { PeakHourProtectionConfig } from "@/lib/providers/peakHourProtection";
+import InputTranslationEditor, {
+  EMPTY_INPUT_TRANSLATION,
+  inputTranslationFromProviderData,
+  normalizeInputTranslationForSave,
+} from "../InputTranslationEditor";
 export interface EditConnectionModalConnection {
   id?: string;
   name?: string;
@@ -197,6 +202,7 @@ export default function EditConnectionModal({
       CHATGPT_WEB_CODEX_CONNECTOR_NAME,
     m365Tier: normalizeM365TierValue(connectionProviderSpecificData?.tier) as M365TierValue,
     peakHourProtection: { ...EMPTY_PEAK_HOUR_PROTECTION, windows: [] } as PeakHourProtectionConfig,
+    inputTranslation: { ...EMPTY_INPUT_TRANSLATION },
   });
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
@@ -430,6 +436,9 @@ export default function EditConnectionModal({
           CHATGPT_WEB_CODEX_CONNECTOR_NAME,
         m365Tier: normalizeM365TierValue(connection.providerSpecificData?.tier) as M365TierValue,
         m365RefreshToken: "",
+        inputTranslation: inputTranslationFromProviderData(
+          connection.providerSpecificData?.inputTranslation
+        ),
         peakHourProtection: {
           ...EMPTY_PEAK_HOUR_PROTECTION,
           ...((connection.providerSpecificData?.peakHourProtection as PeakHourProtectionConfig) ||
@@ -736,6 +745,9 @@ export default function EditConnectionModal({
         updates.providerSpecificData.peakHourProtection = normalizePeakHourProtectionForSave(
           formData.peakHourProtection
         );
+        updates.providerSpecificData.inputTranslation = normalizeInputTranslationForSave(
+          formData.inputTranslation
+        );
         // Explicit `null`, not `undefined`: the PUT route merges
         // { ...existing, ...incoming }, so omitting the key would keep the previous
         // choice and switching back to the default would never take effect.
@@ -924,6 +936,10 @@ export default function EditConnectionModal({
             onChange={(checked) => setFormData({ ...formData, disableCooling: checked })}
             label={t("disableCoolingLabel")}
             description={t("disableCoolingDescription")}
+          />
+          <InputTranslationEditor
+            value={formData.inputTranslation}
+            onChange={(inputTranslation) => setFormData({ ...formData, inputTranslation })}
           />
           <PeakHourProtectionEditor
             value={formData.peakHourProtection}
