@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 const {
   applyInputTranslation,
   collectUserTextSlots,
+  hasNonEnglishLetters,
+  isEnglishTarget,
   resolveInputTranslationConfig,
   InputTranslationError,
 } = await import("../../open-sse/services/inputTranslation.ts");
@@ -186,17 +188,58 @@ test("applyInputTranslation: cache is scoped by target language and model", asyn
   assert.equal(calls.length, 3);
 });
 
-test("applyInputTranslation: translator failure propagates", async () => {
+test("applyInputTranslation: translator failure is fail-open (original text kept)", async () => {
+  let calls = 0;
   const translate = async () => {
+    calls++;
     throw new InputTranslationError("boom");
   };
-  await assert.rejects(
-    applyInputTranslation({ messages: [{ role: "user", content: "x" }] }, CFG, {
-      translate,
-      cache: memoryCache(),
-    }),
-    InputTranslationError
+  const cache = memoryCache();
+  const body = {
+    messages: [
+      { role: "user", content: "eins" },
+      { role: "user", content: "zwei" },
+    ],
+  };
+  const out = await applyInputTranslation(body, CFG, { translate, cache });
+  assert.equal(out.failed, 2);
+  assert.equal(out.failureReason, "boom");
+  assert.equal(calls, 1, "no further translator calls after the first failure");
+  assert.deepEqual(
+    (out.body as typeof body).messages.map((m) => m.content),
+    ["eins", "zwei"]
   );
+  assert.equal(cache.store.size, 0, "failed translations are never cached");
+});
+
+test("applyInputTranslation: English target skips already-English text", async () => {
+  const cache = memoryCache();
+  const { calls, translate } = fakeTranslator();
+  const EN = { ...CFG, targetLanguage: "English" };
+  const body = {
+    messages: [
+      { role: "user", content: "Fix the bug in `main.py` — “quickly” please 🙏" },
+      { role: "user", content: "سلام، حالت چطوره؟" },
+      { role: "user", content: "Wie geht's? Schön!" },
+    ],
+  };
+  const out = await applyInputTranslation(body, EN, { translate, cache });
+  assert.deepEqual(calls, ["سلام، حالت چطوره؟", "Wie geht's? Schön!"]);
+  assert.equal(out.skippedEnglish, 1);
+  const msgs = (out.body as typeof body).messages;
+  assert.equal(msgs[0].content, body.messages[0].content);
+  assert.equal(msgs[1].content, "DE(سلام، حالت چطوره؟)");
+});
+
+test("hasNonEnglishLetters / isEnglishTarget", () => {
+  assert.equal(hasNonEnglishLetters("plain English, 123 — “quotes” 🙂"), false);
+  assert.equal(hasNonEnglishLetters("café"), true);
+  assert.equal(hasNonEnglishLetters("привет"), true);
+  assert.equal(hasNonEnglishLetters("你好"), true);
+  assert.equal(isEnglishTarget("English"), true);
+  assert.equal(isEnglishTarget(" en "), true);
+  assert.equal(isEnglishTarget("en-US"), true);
+  assert.equal(isEnglishTarget("German"), false);
 });
 
 test("gate: no config → body untouched (same reference)", async () => {
@@ -228,24 +271,26 @@ test("gate: translator self-loop request (skip header) is never translated", asy
   assert.equal(out.failed === false && out.body, body);
 });
 
-test("gate: translator failure → 424 input_translation_failed error result", async () => {
+test("gate: translator failure → request continues with the original text", async () => {
+  const body = { messages: [{ role: "user", content: "unique-text-for-gate-failure-test" }] };
+  const warnings: unknown[][] = [];
   const out = await applyConnectionInputTranslation({
-    body: { messages: [{ role: "user", content: "unique-text-for-gate-failure-test" }] },
+    body,
     providerSpecificData: {
       inputTranslation: { enabled: true, model: "m", targetLanguage: "German" },
     },
     headers: null,
+    log: { warn: (...a: unknown[]) => warnings.push(a) },
     cache: memoryCache(),
     translate: async () => {
       throw new InputTranslationError('translator model "m" returned HTTP 500');
     },
   });
-  assert.equal(out.failed, true);
-  if (out.failed) {
-    assert.equal(out.result.status, 424);
-    // chat.ts keys on this code to never cool down the target account for a translator failure.
-    assert.equal(out.result.errorCode, "input_translation_failed");
-    const json = await out.result.response.json();
-    assert.match(JSON.stringify(json), /Input translation failed/);
-  }
+  assert.equal(out.failed, false);
+  assert.equal(
+    out.failed === false && (out.body as typeof body).messages[0].content,
+    "unique-text-for-gate-failure-test"
+  );
+  assert.equal(warnings.length, 1);
+  assert.match(String(warnings[0][1]), /sent untranslated/);
 });
