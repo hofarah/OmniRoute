@@ -512,6 +512,13 @@ const COSTS_ITEMS: readonly SidebarItemDefinition[] = [
     icon: "savings",
   },
   {
+    id: "costs-token-usage",
+    href: "/dashboard/costs/token-usage",
+    i18nKey: "costsTokenUsage",
+    subtitleKey: "costsTokenUsageSubtitle",
+    icon: "data_usage",
+  },
+  {
     id: "costs-free-tiers",
     href: "/dashboard/free-tiers",
     i18nKey: "costsFreeTiers",

@@ -121,6 +121,7 @@ const HEADER_DESCRIPTIONS: Partial<
   "analytics-compression": "analyticsCompressionDescription",
   // Costs sub-pages
   "costs-budget": "costsBudgetDescription",
+  "costs-token-usage": "costsTokenUsageDescription",
   "costs-pricing": "costsPricingDescription",
   // Logs sub-pages
   "logs-proxy": "logsProxyDescription",
