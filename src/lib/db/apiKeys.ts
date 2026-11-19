@@ -655,6 +655,7 @@ export async function pickApiKeyForInternalUse(
       scopes?: string[];
       modelAccessMode?: ModelAccessMode;
       allowedModels?: string[];
+      allowedConnections?: string[];
       lastUsedAt?: string | number | null;
     }>;
 
@@ -671,7 +672,21 @@ export async function pickApiKeyForInternalUse(
     );
     if (manageKey?.key) return manageKey.key;
 
-    // 2. Allow-all key (empty allowedModels means no model restrictions).
+    // 2. Allow-all key with no connection allowlist either: a probe pinned to a connection the
+    //    key cannot reach fails as "No active credentials" even when the connection is healthy.
+    const isConnectionUnrestricted = (k: (typeof keys)[number]) =>
+      !Array.isArray(k.allowedConnections) || k.allowedConnections.length === 0;
+    const allowAllUnrestrictedKey = keys.find(
+      (k) =>
+        isUsable(k) &&
+        k.modelAccessMode !== "restricted" &&
+        Array.isArray(k.allowedModels) &&
+        k.allowedModels.length === 0 &&
+        isConnectionUnrestricted(k)
+    );
+    if (allowAllUnrestrictedKey?.key) return allowAllUnrestrictedKey.key;
+
+    // 2b. Allow-all-models key (may still be connection-restricted).
     const allowAllKey = keys.find(
       (k) =>
         isUsable(k) &&

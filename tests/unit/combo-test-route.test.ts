@@ -33,6 +33,8 @@ const apiKeysDb = await import("../../src/lib/db/apiKeys.ts");
 const combosDb = await import("../../src/lib/db/combos.ts");
 const runtimePorts = await import("../../src/lib/runtime/ports.ts");
 const route = await import("../../src/app/api/combos/test/route.ts");
+const { resolveSelfLoopBearer } =
+  await import("../../src/shared/middleware/chatAdmissionIdentity.ts");
 
 const originalFetch = globalThis.fetch;
 
@@ -425,7 +427,10 @@ test("combo test route rejects empty combos and ignores forwarded origins for in
   assert.equal(forwardedResponse.status, 200);
   assert.equal(fetchCalls.length, 1);
   assert.equal(fetchCalls[0].url, expectedInternalUrl("/v1/chat/completions"));
-  assert.equal(fetchCalls[0].init.headers.Authorization, `Bearer ${internalKey.key}`);
+  // Probes authenticate with the internal self-loop credential, never a user's API key
+  // (a user key's connection allowlist hid pinned targets and the probe was billed to it).
+  assert.notEqual(fetchCalls[0].init.headers.Authorization, `Bearer ${internalKey.key}`);
+  assert.equal(fetchCalls[0].init.headers.Authorization, `Bearer ${resolveSelfLoopBearer()}`);
   assert.equal(new URL(fetchCalls[0].url).hostname, "127.0.0.1");
   assert.notEqual(new URL(fetchCalls[0].url).hostname, "attacker.example.com");
 });
