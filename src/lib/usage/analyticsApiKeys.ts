@@ -7,6 +7,10 @@ type ApiKeyTotal = {
   apiKeyId: string;
   apiKeyName: string;
   requests: number;
+  // Fork: token sums so the per-key token usage report (view=apiKeys) has data.
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
   cost: number;
   lastUsed: string | null;
 };
@@ -35,6 +39,9 @@ export function buildApiKeyTotals(
       apiKeyId: apiKey.id,
       apiKeyName: apiKey.name,
       requests: 0,
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
       cost: 0,
       lastUsed: null,
     };
@@ -54,6 +61,14 @@ export function buildApiKeyTotals(
     const totals = totalsById.get(row.apiKeyId);
     if (!totals) continue;
     totals.requests += Number(row.requests) || 0;
+    const input = Number(row.promptTokens) || 0;
+    const output = Number(row.completionTokens) || 0;
+    const reasoning = Number(row.reasoningTokens) || 0;
+    totals.promptTokens += input;
+    // Reasoning is a subset of output unless reported above it (same rule as computeBillableTokens).
+    const billedOutput = reasoning > output ? output + reasoning : output;
+    totals.completionTokens += billedOutput;
+    totals.totalTokens += input + billedOutput;
     totals.cost += rowCost(row);
     noteLastUsed(totals, row.lastUsed);
   }
