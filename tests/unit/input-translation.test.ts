@@ -243,6 +243,8 @@ test("gate: translator failure → 424 input_translation_failed error result", a
   assert.equal(out.failed, true);
   if (out.failed) {
     assert.equal(out.result.status, 424);
+    // chat.ts keys on this code to never cool down the target account for a translator failure.
+    assert.equal(out.result.errorCode, "input_translation_failed");
     const json = await out.result.response.json();
     assert.match(JSON.stringify(json), /Input translation failed/);
   }

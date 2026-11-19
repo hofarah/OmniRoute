@@ -2989,8 +2989,13 @@ async function handleSingleModelChat(
         ((credentials.providerSpecificData?.extraApiKeys as string[] | undefined) ?? []).length >
           0 || connectionHasExtraKeys(credentials.connectionId);
       const is401 = result.status === 401;
+      // Fork: a failed input translation is the translator's fault, not this account's — never
+      // cool down / rotate the target connection for it (open-sse/services/inputTranslation.ts).
+      const isInputTranslationFailure = result.errorCode === "input_translation_failed";
       const skipConnectionDisable =
-        isRefusalReplay || shouldSkipConnDisable(result, is401, hasExtraKeys, provider);
+        isRefusalReplay ||
+        isInputTranslationFailure ||
+        shouldSkipConnDisable(result, is401, hasExtraKeys, provider);
 
       // Anti-Avalanche Guard (opt-in): detect TPM / context-overflow rejections to suppress domino failover
       const avalancheRisk =
