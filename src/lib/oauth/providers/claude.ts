@@ -117,7 +117,8 @@ async function importSetupToken(token: unknown) {
     accessToken,
     refreshToken: null,
     expiresIn: null,
-    providerSpecificData: newProviderSpecificData(),
+    // Marks the connection inference-only so usage/bootstrap/limit-reset calls are skipped.
+    providerSpecificData: { ...newProviderSpecificData(), setupToken: true },
   };
 }
 

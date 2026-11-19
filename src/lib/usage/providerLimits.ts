@@ -32,6 +32,7 @@ import { supportsProviderQuota } from "@/shared/utils/providerQuotaVisibility";
 import { mergeProviderLimitsCacheEntry, toProviderLimitsCacheEntry } from "./providerLimitsCache";
 import { getCredentialRefreshExecutor } from "@omniroute/open-sse/executors/credential.ts";
 import { getUsageForProvider } from "@omniroute/open-sse/services/usage.ts";
+import { isClaudeSetupTokenConnection } from "@omniroute/open-sse/services/claudeSetupToken.ts";
 import {
   fetchAndSeedClaudeResetCreditUsage,
   withClaudeResetCreditCount,
@@ -1100,7 +1101,12 @@ async function fetchLiveProviderLimitsWithOptions(
 
       // Only the dashboard's on-demand refresh lists credits; background polls keep
       // their base usage request and never trigger reset-credit activity.
-      if (options.includeResetCredits && conn.provider === "claude" && conn.accessToken) {
+      if (
+        options.includeResetCredits &&
+        conn.provider === "claude" &&
+        conn.accessToken &&
+        !isClaudeSetupTokenConnection(conn)
+      ) {
         await fetchAndSeedClaudeResetCreditUsage(conn.id, conn.accessToken);
       }
       connection = conn;

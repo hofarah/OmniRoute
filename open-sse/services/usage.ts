@@ -11,6 +11,10 @@
  */
 
 import {
+  CLAUDE_SETUP_TOKEN_USAGE_MESSAGE,
+  isClaudeSetupTokenConnection,
+} from "./claudeSetupToken.ts";
+import {
   extractCodeAssistOnboardTierId,
   extractCodeAssistSubscriptionTier,
 } from "./codeAssistSubscription.ts";
@@ -168,6 +172,11 @@ export async function getUsageForProvider(
         options
       );
     case "claude":
+      // setup-token connections are inference-only: /api/oauth/usage always answers 403,
+      // so never call it (fork feature, see claudeSetupToken.ts).
+      if (isClaudeSetupTokenConnection(connection)) {
+        return { message: CLAUDE_SETUP_TOKEN_USAGE_MESSAGE };
+      }
       return await getClaudeUsage(accessToken, id || "", {
         forceRefresh: options.forceRefresh === true,
       });
