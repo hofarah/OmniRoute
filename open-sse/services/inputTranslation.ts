@@ -250,6 +250,27 @@ export interface InputTranslationResult<TBody> {
   body: TBody;
   translated: number;
   fromCache: number;
+  /** Text segments sent unchanged because they are already plain English. */
+  skippedEnglish: number;
+  /** Text segments sent unchanged because the translator failed (fail-open). */
+  failed: number;
+  /** First translator error message, when `failed > 0`. */
+  failureReason?: string;
+}
+
+/** Target language is English (the "already English → skip" shortcut only applies then). */
+export function isEnglishTarget(targetLanguage: string): boolean {
+  const t = targetLanguage.trim().toLowerCase();
+  return t === "english" || t === "en" || t.startsWith("en-") || t.startsWith("english ");
+}
+
+/**
+ * True when the text contains a letter outside basic Latin A–Z (Persian, Arabic, Cyrillic, CJK,
+ * accented letters such as ä/é…). Punctuation, digits, emoji and typographic quotes do not count,
+ * so ordinary English text with “smart quotes” or an emoji is still treated as English.
+ */
+export function hasNonEnglishLetters(text: string): boolean {
+  return /(?![A-Za-z])\p{L}/u.test(text);
 }
 
 /**
@@ -262,24 +283,48 @@ export async function applyInputTranslation<TBody>(
   cfg: InputTranslationConfig,
   deps: { translate?: TranslateFn; cache?: InputTranslationCacheStore } = {}
 ): Promise<InputTranslationResult<TBody>> {
-  if (!body || typeof body !== "object") return { body, translated: 0, fromCache: 0 };
+  const empty = { translated: 0, fromCache: 0, skippedEnglish: 0, failed: 0 };
+  if (!body || typeof body !== "object") return { body, ...empty };
   const translate = deps.translate ?? translateViaSelfLoop;
   const cache = deps.cache ?? dbCacheStore;
 
   const clone = structuredClone(body) as Record<string, unknown>;
   const slots = collectUserTextSlots(clone);
-  if (slots.length === 0) return { body: clone as TBody, translated: 0, fromCache: 0 };
+  if (slots.length === 0) return { body: clone as TBody, ...empty };
 
   const keys = slots.map((s) => cacheKey(cfg, s.text));
   const cached = cache.get(keys);
 
   // Translate each distinct missing text once (sequential: normally only the newest turn).
+  // Already-English text (English target) is never sent to the translator. A translator failure
+  // is fail-open: the segment keeps its original text, and after the first failure no further
+  // translator calls are made for this request (the translator is likely down).
+  const skipEnglish = isEnglishTarget(cfg.targetLanguage);
   const fresh = new Map<string, string>();
   const toStore: Array<{ key: string; translated: string }> = [];
+  let skippedEnglish = 0;
+  let failed = 0;
+  let failureReason: string | undefined;
   for (let i = 0; i < slots.length; i++) {
     const key = keys[i];
     if (cached.has(key) || fresh.has(key)) continue;
-    const translated = await translate(slots[i].text, cfg);
+    if (skipEnglish && !hasNonEnglishLetters(slots[i].text)) {
+      skippedEnglish++;
+      continue;
+    }
+    if (failureReason !== undefined) {
+      failed++;
+      continue;
+    }
+    let translated: string;
+    try {
+      translated = await translate(slots[i].text, cfg);
+    } catch (error) {
+      failed++;
+      failureReason =
+        error instanceof InputTranslationError ? error.message : "unexpected translation error";
+      continue;
+    }
     fresh.set(key, translated);
     toStore.push({ key, translated });
     // Identity entry: if a client ever sends the already-translated text back (e.g. history
@@ -297,5 +342,12 @@ export async function applyInputTranslation<TBody>(
     if (cached.has(key)) fromCache++;
     slots[i].set(value);
   }
-  return { body: clone as TBody, translated: fresh.size, fromCache };
+  return {
+    body: clone as TBody,
+    translated: fresh.size,
+    fromCache,
+    skippedEnglish,
+    failed,
+    ...(failureReason !== undefined ? { failureReason } : {}),
+  };
 }
