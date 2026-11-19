@@ -66,13 +66,23 @@ export async function POST(request: Request) {
     if (isValidationFailure(validation)) {
       return NextResponse.json({ error: validation.error }, { status: 400 });
     }
-    const { id, apiKeyId, scopeType, scopeValue, tokenLimit, resetInterval, resetTime, enabled } =
-      validation.data;
+    const {
+      id,
+      apiKeyId,
+      scopeType,
+      scopeValue,
+      tokenType,
+      tokenLimit,
+      resetInterval,
+      resetTime,
+      enabled,
+    } = validation.data;
     const limit = upsertTokenLimit({
       id,
       apiKeyId,
       scopeType,
       scopeValue,
+      tokenType,
       tokenLimit,
       resetInterval,
       resetTime,

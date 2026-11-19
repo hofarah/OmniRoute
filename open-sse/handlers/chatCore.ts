@@ -2672,7 +2672,7 @@ async function handleChatCoreInner({
         // upstream 429 and NOT cool shared accounts / retry it transiently.
         const rejected = createErrorResult(
           HTTP_STATUS.RATE_LIMITED,
-          `Token limit exceeded for ${scopeLabel}: ${tokenBreach.tokensUsed}/${tokenBreach.limitValue} tokens used in the current window. Please try again later.`,
+          `Token limit exceeded for ${scopeLabel}: ${tokenBreach.tokensUsed}/${tokenBreach.limitValue} ${tokenBreach.tokenType === "input" ? "input tokens" : tokenBreach.tokenType === "output" ? "output tokens" : "tokens"} used in the current window. Please try again later.`,
           null,
           "TOKEN_LIMIT_EXCEEDED"
         );

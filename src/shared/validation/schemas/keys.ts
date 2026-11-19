@@ -139,6 +139,8 @@ export const setTokenLimitSchema = z
     apiKeyId: z.string().trim().min(1, "apiKeyId is required"),
     scopeType: z.enum(["model", "provider", "global"]),
     scopeValue: z.string().trim().default(""),
+    // Fork feature: which tokens the limit counts (total = input + output + reasoning).
+    tokenType: z.enum(["total", "input", "output"]).default("total"),
     tokenLimit: z.coerce
       .number()
       .int("tokenLimit must be an integer")

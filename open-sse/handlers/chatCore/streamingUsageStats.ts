@@ -13,7 +13,7 @@
 import { saveRequestUsage } from "@/lib/usageDb";
 import { recordKeyQuotaUsage } from "@/domain/keyQuota";
 import { recordTokenUsage } from "../../services/tokenLimitCounter.ts";
-import { computeBillableTokens } from "./upstreamTimeouts.ts";
+import { computeBillableTokens, computeTokenBreakdown } from "./upstreamTimeouts.ts";
 import { type EffectiveServiceTier } from "./serviceTier.ts";
 
 export type RecordStreamingUsageStatsContext = {
@@ -67,7 +67,7 @@ function recordStreamingBillableTokens(usage: object, ctx: RecordStreamingUsageS
         ctx.apiKeyInfo.id,
         ctx.provider || "unknown",
         ctx.model || "unknown",
-        billable
+        computeTokenBreakdown(usage)
       );
   } catch {
     // never block the stream on counter recording

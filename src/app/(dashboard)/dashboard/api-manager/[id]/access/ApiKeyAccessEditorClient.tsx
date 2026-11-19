@@ -388,9 +388,10 @@ function AccessConnectionsPanelPanelContent({ context }: { context: AccessFormCo
 }
 
 function AccessLimitsPanelPanelContent({ context }: { context: AccessFormContext }) {
-  const { form } = context;
+  const { form, apiKey } = context;
   return (
     <LimitsTab
+      apiKeyId={apiKey?.id}
       formState={form.formState}
       setMaxSessions={form.setMaxSessions}
       setThrottleDelayMs={form.setThrottleDelayMs}

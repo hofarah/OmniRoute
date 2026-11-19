@@ -51,10 +51,16 @@ export function seedWindowUsageFromHistory(limit: TokenLimit, now = Date.now()):
   // tokens_cache_creation are a BREAKDOWN already inside tokens_input (see migration
   // 012_fix_token_input_cache_tokens.sql) — summing them again would double-count.
   // This must mirror computeBillableTokens() in chatCore/upstreamTimeouts.ts.
-  const tokenSum = `COALESCE(SUM(
-      COALESCE(tokens_input, 0) + COALESCE(tokens_output, 0)
-      + COALESCE(tokens_reasoning, 0)
-    ), 0) AS total`;
+  // Fork: input / output limits seed only their own columns (output includes reasoning,
+  // mirroring tokenDeltaForLimit below).
+  const tokenType = limit.tokenType ?? "total";
+  const tokenExpr =
+    tokenType === "input"
+      ? "COALESCE(tokens_input, 0)"
+      : tokenType === "output"
+        ? "COALESCE(tokens_output, 0) + COALESCE(tokens_reasoning, 0)"
+        : "COALESCE(tokens_input, 0) + COALESCE(tokens_output, 0) + COALESCE(tokens_reasoning, 0)";
+  const tokenSum = `COALESCE(SUM(${tokenExpr}), 0) AS total`;
 
   let row: unknown;
   if (limit.scopeType === "model") {
@@ -167,6 +173,7 @@ export function clearTokenLimitCache(): void {
  */
 export interface TokenLimitBreach {
   limitId: string;
+  tokenType: TokenLimit["tokenType"];
   scopeType: TokenLimit["scopeType"];
   scopeValue: string;
   limitValue: number;
@@ -215,6 +222,7 @@ export function checkTokenLimits(
     const remaining = Math.max(0, limitValue - tokensUsed);
     const breach: TokenLimitBreach = {
       limitId: limit.id,
+      tokenType: limit.tokenType ?? "total",
       scopeType: limit.scopeType,
       scopeValue: limit.scopeValue,
       limitValue,
@@ -238,6 +246,43 @@ export function checkTokenLimits(
 }
 
 /**
+ * Per-request token counts (fork feature: input / output token limits). `total` is the canonical
+ * billable total (input + output + reasoning, see computeBillableTokens).
+ */
+export interface TokenUsageBreakdown {
+  input: number;
+  output: number;
+  reasoning?: number;
+}
+
+type NormalizedTokenUsage = { input: number; output: number; total: number; known: boolean };
+
+function nonNegInt(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+}
+
+function normalizeTokenUsage(tokens: number | TokenUsageBreakdown): NormalizedTokenUsage {
+  if (typeof tokens === "number") {
+    // Legacy callers pass only the total: input/output-typed limits cannot be attributed.
+    return { input: 0, output: 0, total: nonNegInt(tokens), known: false };
+  }
+  const input = nonNegInt(tokens?.input);
+  const output = nonNegInt(tokens?.output) + nonNegInt(tokens?.reasoning);
+  return { input, output, total: input + output, known: true };
+}
+
+/** Tokens a single limit should be charged for this request. */
+export function tokenDeltaForLimit(
+  limit: Pick<TokenLimit, "tokenType">,
+  usage: NormalizedTokenUsage
+): number {
+  const type = limit.tokenType ?? "total";
+  if (type === "input") return usage.known ? usage.input : 0;
+  if (type === "output") return usage.known ? usage.output : 0;
+  return usage.total;
+}
+
+/**
  * Record token consumption against every applicable token limit for a request.
  *
  * FIRE-AND-FORGET: scheduled on a microtask so it NEVER blocks the SSE stream.
@@ -258,11 +303,11 @@ export function recordTokenUsage(
   apiKeyId: string,
   provider: string,
   model: string,
-  tokens: number
+  tokens: number | TokenUsageBreakdown
 ): void {
   if (!apiKeyId) return;
-  const delta = Number.isFinite(tokens) && tokens > 0 ? Math.floor(tokens) : 0;
-  if (delta <= 0) return;
+  const usage = normalizeTokenUsage(tokens);
+  if (usage.total <= 0) return;
 
   // Schedule off the hot path; never await, never block the stream.
   Promise.resolve()
@@ -312,6 +357,8 @@ export function recordTokenUsage(
             }
           }
 
+          const delta = tokenDeltaForLimit(limit, usage);
+          if (delta <= 0) continue;
           const total = incrementWindowTokens(limit.id, windowStart, delta);
           applied.push({ limitId: limit.id, windowStart, total });
         }
