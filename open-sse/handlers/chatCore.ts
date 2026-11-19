@@ -107,6 +107,7 @@ import { usesClaudeBridge } from "./chatCore/agentRouterProtocol.ts";
 import { normalizeUpstreamRequestParams } from "./chatCore/upstreamRequestParams.ts";
 import { injectSystemPromptPreTranslation } from "../services/systemPrompt.ts";
 import { applyCustomSystemPrompt } from "./chatCore/customSystemPrompt.ts";
+import { applyConnectionInputTranslation } from "./chatCore/inputTranslationGate.ts";
 import { applyProviderSystemTransforms } from "../services/systemTransforms.ts";
 import { translateRequest } from "../translator/index.ts";
 import { applyReasoningRuleDirective } from "@/lib/reasoningRouting/policy";
@@ -500,6 +501,16 @@ async function handleChatCoreInner({
   });
   if (pluginGate.blocked === true) return pluginGate.result;
   body = pluginGate.body;
+  // ── Per-connection input translation (fork feature) ── translate user text with the
+  // connection's configured translator model before anything else touches the body.
+  const inputTranslationGate = await applyConnectionInputTranslation({
+    body,
+    providerSpecificData: credentials?.providerSpecificData,
+    headers: clientRawRequest?.headers,
+    log,
+  });
+  if (inputTranslationGate.failed === true) return inputTranslationGate.result;
+  body = inputTranslationGate.body;
   // Per-API-key device/connection tracking (port of upstream 9router#931,
   // thanks @mugnimaestra). In-memory only, never blocks the request path.
   trackRequestDevice({
