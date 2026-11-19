@@ -67,6 +67,7 @@ export const HIDEABLE_SIDEBAR_ITEM_IDS = [
   // Costs section
   "costs-pricing",
   "costs-budget",
+  "costs-token-usage",
   "costs-free-tiers",
   "costs-quota-share",
   "costs-teams",
